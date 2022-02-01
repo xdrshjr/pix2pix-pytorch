@@ -90,7 +90,7 @@ def define_G(input_nc, output_nc, ngf, norm='batch', use_dropout=False, init_typ
     # 创建一个resnet生成器 参考论文3.2节 29
     net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9)
 
-    return init_net(net, init_type, init_gain, gpu_id)
+    return init_net(net, init_type, init_gain, gpu_id)  # 初始化模型和模型参数
 
 # 生成器!
 # Defines the generator that consists of Resnet blocks between a few
@@ -107,28 +107,37 @@ class ResnetGenerator(nn.Module):
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
 
-        # 卷积层
+        # 卷积层 3->64
         self.inc = Inconv(input_nc, ngf, norm_layer, use_bias)
-        # 下采样
+        # 下采样 64->128
         self.down1 = Down(ngf, ngf * 2, norm_layer, use_bias)
+        # 下采样 128->256
         self.down2 = Down(ngf * 2, ngf * 4, norm_layer, use_bias)
 
+        # 循环创建对应个数的模型 默认为9
         model = []
         for i in range(n_blocks):
             model += [ResBlock(ngf * 4, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
         self.resblocks = nn.Sequential(*model)
 
+        # 上采样 256 -> 128, 128 -> 64
         self.up1 = Up(ngf * 4, ngf * 2, norm_layer, use_bias)
         self.up2 = Up(ngf * 2, ngf, norm_layer, use_bias)
 
+        # 后处理层 64 -> 3
         self.outc = Outconv(ngf, output_nc)
 
     def forward(self, input):
+        # 前向传播流程
         out = {}
+        # encode
         out['in'] = self.inc(input)
+        # 下采样
         out['d1'] = self.down1(out['in'])
         out['d2'] = self.down2(out['d1'])
+        # resnet
         out['bottle'] = self.resblocks(out['d2'])
+        # 上采样
         out['u1'] = self.up1(out['bottle'])
         out['u2'] = self.up2(out['u1'])
 
@@ -155,14 +164,17 @@ class Inconv(nn.Module):
         x = self.inconv(x)
         return x
 
-
+# 下采样模型
 class Down(nn.Module):
     def __init__(self, in_ch, out_ch, norm_layer, use_bias):
         super(Down, self).__init__()
         self.down = nn.Sequential(
+            # 卷积层 64 -> 128
             nn.Conv2d(in_ch, out_ch, kernel_size=3,
                       stride=2, padding=1, bias=use_bias),
+            # norm层
             norm_layer(out_ch),
+            # 激活层
             nn.ReLU(True)
         )
 
@@ -170,13 +182,16 @@ class Down(nn.Module):
         x = self.down(x)
         return x
 
-
+# ResNet网络 残差网络
+# TODO 阅读retnet论文
 # Define a Resnet block
 class ResBlock(nn.Module):
     def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias):
         super(ResBlock, self).__init__()
         self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout, use_bias)
 
+    # 默认
+    # dim = 256, padding_type = reflect, norm_layer = layer norm, use_dropout = false, use_bias = false
     def build_conv_block(self, dim, padding_type, norm_layer, use_dropout, use_bias):
         conv_block = []
         p = 0
@@ -188,7 +203,7 @@ class ResBlock(nn.Module):
             p = 1
         else:
             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
-
+        # 卷积层 累加多层卷积
         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
                        norm_layer(dim),
                        nn.ReLU(True)]
@@ -267,6 +282,7 @@ def define_D(input_nc, ndf, netD,
 
 
 # Defines the PatchGAN discriminator with the specified arguments.
+# 判别器
 class NLayerDiscriminator(nn.Module):
     def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, use_sigmoid=False):
         super(NLayerDiscriminator, self).__init__()
@@ -277,6 +293,7 @@ class NLayerDiscriminator(nn.Module):
 
         kw = 4
         padw = 1
+        # 6-> 64 卷积层 并通过relu激活
         sequence = [
             nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw),
             nn.LeakyReLU(0.2, True)

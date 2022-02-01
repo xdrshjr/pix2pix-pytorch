@@ -41,6 +41,7 @@ def dealDatasets():
     print('===> Loading datasets')
     root_path = "dataset/"
     # 加载训练集和测试集
+    # TODO 数据如何加载 是否需要标注 position
     train_set = get_training_set(root_path + opt.dataset, opt.direction)
     test_set = get_test_set(root_path + opt.dataset, opt.direction)
 
@@ -53,7 +54,10 @@ def dealDatasets():
 def defineModel():
     global net_g, net_d
     # TODO ngf 第一个卷积层的生成器过滤数
+    # 生成器
+    # 下采样 -> ResNet -> 上采样
     net_g = define_G(opt.input_nc, opt.output_nc, opt.ngf, 'batch', False, 'normal', 0.02, gpu_id=device)
+    # 判别器
     net_d = define_D(opt.input_nc + opt.output_nc, opt.ndf, 'basic', gpu_id=device)
 
 
@@ -81,13 +85,15 @@ if __name__ == '__main__':
     print('===> Building models')
 
     # input_nc 输入图像的频道数
+    # 定义模型
     defineModel()
 
+    # 损失值
     criterionGAN = GANLoss().to(device)
     criterionL1 = nn.L1Loss().to(device)
     criterionMSE = nn.MSELoss().to(device)
 
-    # setup optimizer
+    # setup optimizer 优化器
     optimizer_g = optim.Adam(net_g.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
     optimizer_d = optim.Adam(net_d.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
     net_g_scheduler = get_scheduler(optimizer_g, opt)
@@ -97,26 +103,37 @@ if __name__ == '__main__':
         # train
         for iteration, batch in enumerate(training_data_loader, 1):
             # forward
+            # 原始真实数据
+            # [1, 3, 256, 256]
             real_a, real_b = batch[0].to(device), batch[1].to(device)
+            # 生成器生成的假数据
+            # [1, 3, 256, 256]
             fake_b = net_g(real_a)
 
             ######################
             # (1) Update D network
+            # 更新判别器
             ######################
 
             optimizer_d.zero_grad()
 
             # train with fake
+            # 1 拼接真假数据 拼接训练 -> [1, 6, 256, 256]
             fake_ab = torch.cat((real_a, fake_b), 1)
+            # 预测的判别张量 -> [1, 1, 30, 30]
             pred_fake = net_d.forward(fake_ab.detach())
+            # 计算预测损失值 -> MSE OR BCE
             loss_d_fake = criterionGAN(pred_fake, False)
 
             # train with real
+            # 2 两份真的数据 拼接训练
             real_ab = torch.cat((real_a, real_b), 1)
             pred_real = net_d.forward(real_ab)
+            # 计算两份真实数据拼接预测的损失值
             loss_d_real = criterionGAN(pred_real, True)
 
             # Combined D loss
+            # 计算整体损失值
             loss_d = (loss_d_fake + loss_d_real) * 0.5
 
             loss_d.backward()
@@ -125,6 +142,7 @@ if __name__ == '__main__':
 
             ######################
             # (2) Update G network
+            # 更新生成器
             ######################
 
             optimizer_g.zero_grad()
