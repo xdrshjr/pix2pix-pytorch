@@ -4,7 +4,7 @@ from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
 
-
+# 获取norm层的方法 可选为batch/instance/switchable三种不同的方式
 def get_norm_layer(norm_type='instance'):
     if norm_type == 'batch':
         norm_layer = functools.partial(nn.BatchNorm2d, affine=True)
@@ -73,15 +73,26 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_id='cuda:0'):
     return net
 
 
+"""
+input_nc    输入频道数
+output_nc   输出频道数
+ngf     过滤数
+norm    
+use_dropout
+init_type
+init_gain
+gpu_id
+"""
 def define_G(input_nc, output_nc, ngf, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_id='cuda:0'):
     net = None
+    # 获取norm层
     norm_layer = get_norm_layer(norm_type=norm)
-
+    # 创建一个resnet生成器 参考论文3.2节 29
     net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9)
-   
+
     return init_net(net, init_type, init_gain, gpu_id)
 
-
+# 生成器!
 # Defines the generator that consists of Resnet blocks between a few
 # downsampling/upsampling operations.
 class ResnetGenerator(nn.Module):
@@ -96,7 +107,9 @@ class ResnetGenerator(nn.Module):
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
 
+        # 卷积层
         self.inc = Inconv(input_nc, ngf, norm_layer, use_bias)
+        # 下采样
         self.down1 = Down(ngf, ngf * 2, norm_layer, use_bias)
         self.down2 = Down(ngf * 2, ngf * 4, norm_layer, use_bias)
 
@@ -121,15 +134,20 @@ class ResnetGenerator(nn.Module):
 
         return self.outc(out['u2'])
 
-
+# 卷积层
 class Inconv(nn.Module):
     def __init__(self, in_ch, out_ch, norm_layer, use_bias):
         super(Inconv, self).__init__()
+        # ReflectionPad2d 对原始的张量进行扩张 扩张长度为3
         self.inconv = nn.Sequential(
+            # 1 向量扩张
             nn.ReflectionPad2d(3),
+            # 2 卷积层 3 -> 64
             nn.Conv2d(in_ch, out_ch, kernel_size=7, padding=0,
                       bias=use_bias),
+            # 3 norm层
             norm_layer(out_ch),
+            # 4 relu激活层
             nn.ReLU(True)
         )
 

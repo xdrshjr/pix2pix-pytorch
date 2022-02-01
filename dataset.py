@@ -9,15 +9,17 @@ import torchvision.transforms as transforms
 
 from utils import is_image_file, load_img
 
-
+# 数据加载类
 class DatasetFromFolder(data.Dataset):
     def __init__(self, image_dir, direction):
         super(DatasetFromFolder, self).__init__()
+        # TODO 方向设置 b2a a2b 意味着什么
         self.direction = direction
         self.a_path = join(image_dir, "a")
         self.b_path = join(image_dir, "b")
         self.image_filenames = [x for x in listdir(self.a_path) if is_image_file(x)]
 
+        # 变换列表 设置标准差和方差
         transform_list = [transforms.ToTensor(),
                           transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
 

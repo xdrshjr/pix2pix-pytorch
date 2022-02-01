@@ -35,115 +35,139 @@ parser.add_argument('--seed', type=int, default=123, help='random seed to use. D
 parser.add_argument('--lamb', type=int, default=10, help='weight on L1 term in objective')
 opt = parser.parse_args()
 
-print(opt)
 
-if opt.cuda and not torch.cuda.is_available():
-    raise Exception("No GPU found, please run without --cuda")
+def dealDatasets():
+    global training_data_loader, testing_data_loader
+    print('===> Loading datasets')
+    root_path = "dataset/"
+    # 加载训练集和测试集
+    train_set = get_training_set(root_path + opt.dataset, opt.direction)
+    test_set = get_test_set(root_path + opt.dataset, opt.direction)
 
-cudnn.benchmark = True
+    training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size,
+                                      shuffle=True)
+    testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=opt.test_batch_size,
+                                     shuffle=False)
 
-torch.manual_seed(opt.seed)
-if opt.cuda:
-    torch.cuda.manual_seed(opt.seed)
 
-print('===> Loading datasets')
-root_path = "dataset/"
-train_set = get_training_set(root_path + opt.dataset, opt.direction)
-test_set = get_test_set(root_path + opt.dataset, opt.direction)
-training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=True)
-testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=opt.test_batch_size, shuffle=False)
+def defineModel():
+    global net_g, net_d
+    # TODO ngf 第一个卷积层的生成器过滤数
+    net_g = define_G(opt.input_nc, opt.output_nc, opt.ngf, 'batch', False, 'normal', 0.02, gpu_id=device)
+    net_d = define_D(opt.input_nc + opt.output_nc, opt.ndf, 'basic', gpu_id=device)
 
-device = torch.device("cuda:0" if opt.cuda else "cpu")
 
-print('===> Building models')
-net_g = define_G(opt.input_nc, opt.output_nc, opt.ngf, 'batch', False, 'normal', 0.02, gpu_id=device)
-net_d = define_D(opt.input_nc + opt.output_nc, opt.ndf, 'basic', gpu_id=device)
+if __name__ == '__main__':
 
-criterionGAN = GANLoss().to(device)
-criterionL1 = nn.L1Loss().to(device)
-criterionMSE = nn.MSELoss().to(device)
+    # opt为参数
+    print(opt)
 
-# setup optimizer
-optimizer_g = optim.Adam(net_g.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-optimizer_d = optim.Adam(net_d.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-net_g_scheduler = get_scheduler(optimizer_g, opt)
-net_d_scheduler = get_scheduler(optimizer_d, opt)
+    if opt.cuda and not torch.cuda.is_available():
+        raise Exception("No GPU found, please run without --cuda")
 
-for epoch in range(opt.epoch_count, opt.niter + opt.niter_decay + 1):
-    # train
-    for iteration, batch in enumerate(training_data_loader, 1):
-        # forward
-        real_a, real_b = batch[0].to(device), batch[1].to(device)
-        fake_b = net_g(real_a)
+    cudnn.benchmark = True
 
-        ######################
-        # (1) Update D network
-        ######################
+    # 随机种子参数设置
+    torch.manual_seed(opt.seed)
+    if opt.cuda:
+        torch.cuda.manual_seed(opt.seed)
 
-        optimizer_d.zero_grad()
-        
-        # train with fake
-        fake_ab = torch.cat((real_a, fake_b), 1)
-        pred_fake = net_d.forward(fake_ab.detach())
-        loss_d_fake = criterionGAN(pred_fake, False)
+    # 数据处理
+    dealDatasets()
 
-        # train with real
-        real_ab = torch.cat((real_a, real_b), 1)
-        pred_real = net_d.forward(real_ab)
-        loss_d_real = criterionGAN(pred_real, True)
-        
-        # Combined D loss
-        loss_d = (loss_d_fake + loss_d_real) * 0.5
+    device = torch.device("cuda:0" if opt.cuda else "cpu")
 
-        loss_d.backward()
-       
-        optimizer_d.step()
+    # 中心逻辑 模型设置
+    print('===> Building models')
 
-        ######################
-        # (2) Update G network
-        ######################
+    # input_nc 输入图像的频道数
+    defineModel()
 
-        optimizer_g.zero_grad()
+    criterionGAN = GANLoss().to(device)
+    criterionL1 = nn.L1Loss().to(device)
+    criterionMSE = nn.MSELoss().to(device)
 
-        # First, G(A) should fake the discriminator
-        fake_ab = torch.cat((real_a, fake_b), 1)
-        pred_fake = net_d.forward(fake_ab)
-        loss_g_gan = criterionGAN(pred_fake, True)
+    # setup optimizer
+    optimizer_g = optim.Adam(net_g.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+    optimizer_d = optim.Adam(net_d.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+    net_g_scheduler = get_scheduler(optimizer_g, opt)
+    net_d_scheduler = get_scheduler(optimizer_d, opt)
 
-        # Second, G(A) = B
-        loss_g_l1 = criterionL1(fake_b, real_b) * opt.lamb
-        
-        loss_g = loss_g_gan + loss_g_l1
-        
-        loss_g.backward()
+    for epoch in range(opt.epoch_count, opt.niter + opt.niter_decay + 1):
+        # train
+        for iteration, batch in enumerate(training_data_loader, 1):
+            # forward
+            real_a, real_b = batch[0].to(device), batch[1].to(device)
+            fake_b = net_g(real_a)
 
-        optimizer_g.step()
+            ######################
+            # (1) Update D network
+            ######################
 
-        print("===> Epoch[{}]({}/{}): Loss_D: {:.4f} Loss_G: {:.4f}".format(
-            epoch, iteration, len(training_data_loader), loss_d.item(), loss_g.item()))
+            optimizer_d.zero_grad()
 
-    update_learning_rate(net_g_scheduler, optimizer_g)
-    update_learning_rate(net_d_scheduler, optimizer_d)
+            # train with fake
+            fake_ab = torch.cat((real_a, fake_b), 1)
+            pred_fake = net_d.forward(fake_ab.detach())
+            loss_d_fake = criterionGAN(pred_fake, False)
 
-    # test
-    avg_psnr = 0
-    for batch in testing_data_loader:
-        input, target = batch[0].to(device), batch[1].to(device)
+            # train with real
+            real_ab = torch.cat((real_a, real_b), 1)
+            pred_real = net_d.forward(real_ab)
+            loss_d_real = criterionGAN(pred_real, True)
 
-        prediction = net_g(input)
-        mse = criterionMSE(prediction, target)
-        psnr = 10 * log10(1 / mse.item())
-        avg_psnr += psnr
-    print("===> Avg. PSNR: {:.4f} dB".format(avg_psnr / len(testing_data_loader)))
+            # Combined D loss
+            loss_d = (loss_d_fake + loss_d_real) * 0.5
 
-    #checkpoint
-    if epoch % 50 == 0:
-        if not os.path.exists("checkpoint"):
-            os.mkdir("checkpoint")
-        if not os.path.exists(os.path.join("checkpoint", opt.dataset)):
-            os.mkdir(os.path.join("checkpoint", opt.dataset))
-        net_g_model_out_path = "checkpoint/{}/netG_model_epoch_{}.pth".format(opt.dataset, epoch)
-        net_d_model_out_path = "checkpoint/{}/netD_model_epoch_{}.pth".format(opt.dataset, epoch)
-        torch.save(net_g, net_g_model_out_path)
-        torch.save(net_d, net_d_model_out_path)
-        print("Checkpoint saved to {}".format("checkpoint" + opt.dataset))
+            loss_d.backward()
+
+            optimizer_d.step()
+
+            ######################
+            # (2) Update G network
+            ######################
+
+            optimizer_g.zero_grad()
+
+            # First, G(A) should fake the discriminator
+            fake_ab = torch.cat((real_a, fake_b), 1)
+            pred_fake = net_d.forward(fake_ab)
+            loss_g_gan = criterionGAN(pred_fake, True)
+
+            # Second, G(A) = B
+            loss_g_l1 = criterionL1(fake_b, real_b) * opt.lamb
+
+            loss_g = loss_g_gan + loss_g_l1
+
+            loss_g.backward()
+
+            optimizer_g.step()
+
+            print("===> Epoch[{}]({}/{}): Loss_D: {:.4f} Loss_G: {:.4f}".format(
+                epoch, iteration, len(training_data_loader), loss_d.item(), loss_g.item()))
+
+        update_learning_rate(net_g_scheduler, optimizer_g)
+        update_learning_rate(net_d_scheduler, optimizer_d)
+
+        # test
+        avg_psnr = 0
+        for batch in testing_data_loader:
+            input, target = batch[0].to(device), batch[1].to(device)
+
+            prediction = net_g(input)
+            mse = criterionMSE(prediction, target)
+            psnr = 10 * log10(1 / mse.item())
+            avg_psnr += psnr
+        print("===> Avg. PSNR: {:.4f} dB".format(avg_psnr / len(testing_data_loader)))
+
+        #checkpoint
+        if epoch % 50 == 0:
+            if not os.path.exists("checkpoint"):
+                os.mkdir("checkpoint")
+            if not os.path.exists(os.path.join("checkpoint", opt.dataset)):
+                os.mkdir(os.path.join("checkpoint", opt.dataset))
+            net_g_model_out_path = "checkpoint/{}/netG_model_epoch_{}.pth".format(opt.dataset, epoch)
+            net_d_model_out_path = "checkpoint/{}/netD_model_epoch_{}.pth".format(opt.dataset, epoch)
+            torch.save(net_g, net_g_model_out_path)
+            torch.save(net_d, net_d_model_out_path)
+            print("Checkpoint saved to {}".format("checkpoint" + opt.dataset))
